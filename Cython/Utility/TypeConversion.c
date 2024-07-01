@@ -93,13 +93,13 @@ static CYTHON_INLINE PyObject* __Pyx_PyUnicode_FromString(const char*);
 static CYTHON_INLINE PyObject * __Pyx_PyBool_FromLong(long b);
 static CYTHON_INLINE int __Pyx_PyObject_IsTrue(PyObject*);
 static CYTHON_INLINE int __Pyx_PyObject_IsTrueAndDecref(PyObject*);
-static CYTHON_INLINE PyObject* __Pyx_PyNumber_IntOrLong(PyObject* x);
+static CYTHON_INLINE PyObject* __Pyx_PyNumber_Long(PyObject* x);
 
 #define __Pyx_PySequence_Tuple(obj) \
     (likely(PyTuple_CheckExact(obj)) ? __Pyx_NewRef(obj) : PySequence_Tuple(obj))
 
 static CYTHON_INLINE Py_ssize_t __Pyx_PyIndex_AsSsize_t(PyObject*);
-static CYTHON_INLINE PyObject * __Pyx_PyInt_FromSize_t(size_t);
+static CYTHON_INLINE PyObject * __Pyx_PyLong_FromSize_t(size_t);
 static CYTHON_INLINE Py_hash_t __Pyx_PyIndex_AsHash_t(PyObject*);
 
 #if CYTHON_ASSUME_SAFE_MACROS
@@ -111,6 +111,7 @@ static CYTHON_INLINE Py_hash_t __Pyx_PyIndex_AsHash_t(PyObject*);
 #endif
 #define __Pyx_PyFloat_AsFloat(x) ((float) __Pyx_PyFloat_AsDouble(x))
 
+// We call this __Pyx_PyNumber_Int() since it's the equivalent of the int() function call.
 #define __Pyx_PyNumber_Int(x) (PyLong_CheckExact(x) ? __Pyx_NewRef(x) : PyNumber_Long(x))
 // __Pyx_PyNumber_Float is now in its own section since it has dependencies (needed to make
 // string conversion work the same in all circumstances).
@@ -267,7 +268,7 @@ static CYTHON_INLINE int __Pyx_PyObject_IsTrueAndDecref(PyObject* x) {
     return retval;
 }
 
-static PyObject* __Pyx_PyNumber_IntOrLongWrongResultType(PyObject* result, const char* type_name) {
+static PyObject* __Pyx_PyNumber_LongWrongResultType(PyObject* result) {
     __Pyx_TypeName result_type_name = __Pyx_PyType_GetName(Py_TYPE(result));
     if (PyLong_Check(result)) {
         // CPython issue #17576: warn if 'result' not of exact type int.
@@ -284,35 +285,33 @@ static PyObject* __Pyx_PyNumber_IntOrLongWrongResultType(PyObject* result, const
         return result;
     }
     PyErr_Format(PyExc_TypeError,
-                 "__%.4s__ returned non-%.4s (type " __Pyx_FMT_TYPENAME ")",
-                 type_name, type_name, result_type_name);
+                 "__int__ returned non-int (type " __Pyx_FMT_TYPENAME ")",
+                 result_type_name);
     __Pyx_DECREF_TypeName(result_type_name);
     Py_DECREF(result);
     return NULL;
 }
 
-static CYTHON_INLINE PyObject* __Pyx_PyNumber_IntOrLong(PyObject* x) {
+static CYTHON_INLINE PyObject* __Pyx_PyNumber_Long(PyObject* x) {
 #if CYTHON_USE_TYPE_SLOTS
   PyNumberMethods *m;
 #endif
-  const char *name = NULL;
   PyObject *res = NULL;
   if (likely(PyLong_Check(x)))
       return __Pyx_NewRef(x);
 #if CYTHON_USE_TYPE_SLOTS
   m = Py_TYPE(x)->tp_as_number;
   if (likely(m && m->nb_int)) {
-      name = "int";
       res = m->nb_int(x);
   }
 #else
   if (!PyBytes_CheckExact(x) && !PyUnicode_CheckExact(x)) {
-      res = PyNumber_Int(x);
+      res = PyNumber_Long(x);
   }
 #endif
   if (likely(res)) {
       if (unlikely(!PyLong_CheckExact(res))) {
-          return __Pyx_PyNumber_IntOrLongWrongResultType(res, name);
+          return __Pyx_PyNumber_LongWrongResultType(res);
       }
   }
   else if (!PyErr_Occurred()) {
@@ -352,7 +351,7 @@ static CYTHON_INLINE Py_ssize_t __Pyx_PyIndex_AsSsize_t(PyObject* b) {
   }
   x = PyNumber_Index(b);
   if (!x) return -1;
-  ival = PyInt_AsSsize_t(x);
+  ival = PyLong_AsSsize_t(x);
   Py_DECREF(x);
   return ival;
 }
@@ -366,7 +365,7 @@ static CYTHON_INLINE Py_hash_t __Pyx_PyIndex_AsHash_t(PyObject* o) {
     PyObject *x;
     x = PyNumber_Index(o);
     if (!x) return -1;
-    ival = PyInt_AsLong(x);
+    ival = PyLong_AsLong(x);
     Py_DECREF(x);
     return ival;
   }
@@ -378,8 +377,8 @@ static CYTHON_INLINE PyObject * __Pyx_PyBool_FromLong(long b) {
 }
 
 
-static CYTHON_INLINE PyObject * __Pyx_PyInt_FromSize_t(size_t ival) {
-    return PyInt_FromSize_t(ival);
+static CYTHON_INLINE PyObject * __Pyx_PyLong_FromSize_t(size_t ival) {
+    return PyLong_FromSize_t(ival);
 }
 
 /////////////// pynumber_float.proto ///////////////
@@ -572,7 +571,7 @@ static Py_UCS4 __Pyx__PyObject_AsPy_UCS4_raise_error(long ival) {
 
 static Py_UCS4 __Pyx__PyObject_AsPy_UCS4(PyObject* x) {
    long ival;
-   ival = __Pyx_PyInt_As_long(x);
+   ival = __Pyx_PyLong_As_long(x);
    if (unlikely(!__Pyx_is_valid_index(ival, 1114111 + 1))) {
        return __Pyx__PyObject_AsPy_UCS4_raise_error(ival);
    }
@@ -606,7 +605,7 @@ static CYTHON_INLINE Py_UNICODE __Pyx_PyObject_AsPy_UNICODE(PyObject* x) {
         }
         ival = PyUnicode_READ_CHAR(x, 0);
     } else {
-        ival = __Pyx_PyInt_As_long(x);
+        ival = __Pyx_PyLong_As_long(x);
     }
     if (unlikely(!__Pyx_is_valid_index(ival, maxval + 1))) {
         if (ival < 0) {
@@ -644,7 +643,7 @@ static CYTHON_INLINE PyObject* {{TO_PY_FUNCTION}}({{TYPE}} value) {
     const int is_unsigned = neg_one > const_zero;
     if (is_unsigned) {
         if (sizeof({{TYPE}}) < sizeof(long)) {
-            return PyInt_FromLong((long) value);
+            return PyLong_FromLong((long) value);
         } else if (sizeof({{TYPE}}) <= sizeof(unsigned long)) {
             return PyLong_FromUnsignedLong((unsigned long) value);
 #ifdef HAVE_LONG_LONG
@@ -654,7 +653,7 @@ static CYTHON_INLINE PyObject* {{TO_PY_FUNCTION}}({{TYPE}} value) {
         }
     } else {
         if (sizeof({{TYPE}}) <= sizeof(long)) {
-            return PyInt_FromLong((long) value);
+            return PyLong_FromLong((long) value);
 #ifdef HAVE_LONG_LONG
         } else if (sizeof({{TYPE}}) <= sizeof(PY_LONG_LONG)) {
             return PyLong_FromLongLong((PY_LONG_LONG) value);
@@ -839,12 +838,6 @@ static CYTHON_INLINE PyObject* {{TO_PY_FUNCTION}}({{TYPE}} value, Py_ssize_t wid
     ((value) ? __Pyx_NewRef({{TRUE_CONST}}) : __Pyx_NewRef({{FALSE_CONST}}))
 
 
-/////////////// PyIntFromDouble.proto ///////////////
-
-// TODO: remove
-#define __Pyx_PyInt_FromDouble(value) PyLong_FromDouble(value)
-
-
 /////////////// CIntFromPyVerify ///////////////
 
 // see CIntFromPy
@@ -895,7 +888,7 @@ static CYTHON_INLINE {{TYPE}} {{FROM_PY_FUNCTION}}(PyObject *x) {
 
     if (unlikely(!PyLong_Check(x))) {
         {{TYPE}} val;
-        PyObject *tmp = __Pyx_PyNumber_IntOrLong(x);
+        PyObject *tmp = __Pyx_PyNumber_Long(x);
         if (!tmp) return ({{TYPE}}) -1;
         val = {{FROM_PY_FUNCTION}}(tmp);
         Py_DECREF(tmp);
@@ -1118,27 +1111,39 @@ raise_neg_overflow:
 }
 
 /////////////// CFuncPtrTypedef.proto ///////////////
+//@substitute: naming
 
-typedef void (*__Pyx_generic_func_pointer)(void);
+#ifndef __PYX_HAVE_RT_CFuncPtrTypedef_$cyversion
+#define __PYX_HAVE_RT_CFuncPtrTypedef_$cyversion
+typedef void (*__Pyx_generic_func_pointer_$cyversion)(void);
+#endif
 
 /////////////// CFuncPtrToPy.proto ///////////////
 //@requires: CFuncPtrTypedef
+//@substitute: naming
 
-static PyObject *__Pyx_c_func_ptr_to_capsule(__Pyx_generic_func_pointer funcptr, const char* name); /* proto */
+static PyObject *__Pyx_c_func_ptr_to_capsule(__Pyx_generic_func_pointer_$cyversion funcptr, const char* name); /* proto */
 
 /////////////// CFuncPtrToPy ///////////////
 //@requires: StringTools.c::IncludeStringH
+//@substitute: naming
 
 static void __Pyx_destroy_c_func_ptr_capsule(PyObject *capsule) {
     void* ptr = PyCapsule_GetPointer(capsule, PyCapsule_GetName(capsule));
     PyMem_Free(ptr);
 }
 
-static PyObject *__Pyx_c_func_ptr_to_capsule(__Pyx_generic_func_pointer funcptr, const char* name) {
-    if (sizeof(funcptr) > sizeof(void*) || __Pyx_TEST_large_func_pointers) {
+static PyObject *__Pyx_c_func_ptr_to_capsule(__Pyx_generic_func_pointer_$cyversion funcptr, const char* name) {
+    // __Pyx_TEST_large_func_pointers exists just to force an alternative code-path in testing
+#if defined(__Pyx_TEST_large_func_pointers) && __Pyx_TEST_large_func_pointers
+    if ((1))
+#else
+    if (sizeof(funcptr) > sizeof(void*))
+#endif
+    {
         // The C standard does not guarantee that a function pointer fits inside a regular pointer
         // (and on some platforms it doesn't). On these, we need to allocate space to store the function pointer
-        __Pyx_generic_func_pointer *copy_into = (__Pyx_generic_func_pointer*) PyMem_Malloc(sizeof(funcptr));
+        __Pyx_generic_func_pointer_$cyversion *copy_into = (__Pyx_generic_func_pointer_$cyversion*) PyMem_Malloc(sizeof(funcptr));
         *copy_into = funcptr;
         return PyCapsule_New(copy_into, name, __Pyx_destroy_c_func_ptr_capsule);
     } else {
@@ -1155,17 +1160,26 @@ static PyObject *__Pyx_c_func_ptr_to_capsule(__Pyx_generic_func_pointer funcptr,
 /////////////// CFuncPtrFromPy.proto ///////////////
 //@requires: CFuncPtrTypedef
 
-static __Pyx_generic_func_pointer __Pyx_capsule_to_c_func_ptr(PyObject *capsule, const char* name); /* proto */
+static __Pyx_generic_func_pointer_$cyversion __Pyx_capsule_to_c_func_ptr_$cyversion(PyObject *capsule, const char* name); /* proto */
 
 /////////////// CFuncPtrFromPy.proto ///////////////
+//@substitute: naming
 
-static __Pyx_generic_func_pointer __Pyx_capsule_to_c_func_ptr(PyObject *capsule, const char* name) {
+#ifndef __PYX_HAVE_RT_CFuncPtrFromPy_$cyversion
+#define __PYX_HAVE_RT_CFuncPtrFromPy_$cyversion
+static __Pyx_generic_func_pointer_$cyversion __Pyx_capsule_to_c_func_ptr_$cyversion(PyObject *capsule, const char* name) {
     void *data = PyCapsule_GetPointer(capsule, name);
-    __Pyx_generic_func_pointer funcptr;
-    if (sizeof(funcptr) > sizeof(void*) || __Pyx_TEST_large_func_pointers) {
-        funcptr = *((__Pyx_generic_func_pointer*)data);
+    __Pyx_generic_func_pointer_$cyversion funcptr;
+#if defined(__Pyx_TEST_large_func_pointers) && __Pyx_TEST_large_func_pointers
+    if ((1))
+#else
+    if (sizeof(funcptr) > sizeof(void*))
+#endif
+    {
+        funcptr = *((__Pyx_generic_func_pointer_$cyversion*)data);
     } else {
         memcpy((void*)&funcptr, (void*)&data, sizeof(funcptr));
     }
     return funcptr;
 }
+#endif
