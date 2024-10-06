@@ -1392,7 +1392,7 @@ class PyObjectType(PyrexType):
 
 builtin_types_that_cannot_create_refcycles = frozenset({
     'object', 'bool', 'int', 'long', 'float', 'complex',
-    'bytearray', 'bytes', 'unicode', 'str', 'basestring',
+    'bytearray', 'bytes', 'str',
 })
 
 builtin_types_with_trashcan = frozenset({
@@ -1452,10 +1452,7 @@ class BuiltinObjectType(PyObjectType):
 
     def assignable_from(self, src_type):
         if isinstance(src_type, BuiltinObjectType):
-            if self.name == 'basestring':
-                return src_type.name in ('str', 'unicode', 'basestring')
-            else:
-                return src_type.name == self.name
+            return src_type.name == self.name
         elif src_type.is_extension_type:
             # FIXME: This is an ugly special case that we currently
             # keep supporting.  It allows users to specify builtin
@@ -1479,9 +1476,7 @@ class BuiltinObjectType(PyObjectType):
     def type_check_function(self, exact=True):
         type_name = self.name
         if type_name == 'str':
-            type_check = 'PyString_Check'
-        elif type_name == 'basestring':
-            type_check = '__Pyx_PyBaseString_Check'
+            type_check = 'PyUnicode_Check'
         elif type_name == 'Exception':
             type_check = '__Pyx_PyException_Check'
         elif type_name == 'BaseException':
@@ -1504,16 +1499,14 @@ class BuiltinObjectType(PyObjectType):
     def isinstance_code(self, arg):
         return '%s(%s)' % (self.type_check_function(exact=False), arg)
 
-    def type_test_code(self, arg, notnone=False, exact=True):
+    def type_test_code(self, scope, arg, allow_none=True, exact=True):
         type_check = self.type_check_function(exact=exact)
-        check = 'likely(%s(%s))' % (type_check, arg)
-        if not notnone:
-            check += '||((%s) == Py_None)' % arg
-        if self.name == 'basestring':
-            name = '(PY_MAJOR_VERSION < 3 ? "basestring" : "str")'
-        else:
-            name = '"%s"' % self.name
-        return check + ' || __Pyx_RaiseUnexpectedTypeError(%s, %s)' % (name, arg)
+        check = f'likely({type_check}({arg}))'
+        scope.use_utility_code(UtilityCode.load_cached(
+                    "RaiseUnexpectedTypeError", "ObjectHandling.c"))
+        if allow_none:
+            check += f'||(({arg}) == Py_None)'
+        return check + f' || __Pyx_RaiseUnexpectedTypeError("{self.name}", {arg})'
 
     def declaration_code(self, entity_code,
             for_display = 0, dll_linkage = None, pyrex = 0):
@@ -1649,15 +1642,13 @@ class PyExtensionType(PyObjectType):
                 entity_code = "*%s" % entity_code
         return self.base_declaration_code(base_code, entity_code)
 
-    def type_test_code(self, py_arg, notnone=False):
-
-        none_check = "((%s) == Py_None)" % py_arg
-        type_check = "likely(__Pyx_TypeTest(%s, %s))" % (
-            py_arg, self.typeptr_cname)
-        if notnone:
-            return type_check
-        else:
-            return "likely(%s || %s)" % (none_check, type_check)
+    def type_test_code(self, scope, py_arg, allow_none=True):
+        typeptr_cname = scope.name_in_module_state(self.typeptr_cname)
+        type_check = f"likely(__Pyx_TypeTest({py_arg}, {typeptr_cname}))"
+        scope.use_utility_code(UtilityCode.load_cached("ExtTypeTest", "ObjectHandling.c"))
+        if allow_none:
+            type_check = f"likely((({py_arg}) == Py_None) || {type_check})"
+        return type_check
 
     def attributes_known(self):
         return self.scope is not None
@@ -1870,8 +1861,10 @@ class CConstOrVolatileType(BaseType):
         return getattr(self.cv_base_type, name)
 
 
-def CConstType(base_type):
-    return CConstOrVolatileType(base_type, is_const=1)
+def c_const_type(base_type):
+    """Creates a C 'const ...' type but does not test for 'error_type'.
+    """
+    return CConstOrVolatileType(base_type, is_const=True)
 
 
 class FusedType(CType):
@@ -2256,7 +2249,7 @@ class CReturnCodeType(CIntType):
         return not format_spec
 
     def convert_to_pystring(self, cvalue, code, format_spec=None):
-        return "__Pyx_NewRef(%s)" % code.globalstate.get_py_string_const(StringEncoding.EncodedString("None")).cname
+        return "__Pyx_NewRef(%s)" % code.get_py_string_const(StringEncoding.EncodedString("None"))
 
 
 class CBIntType(CIntType):
@@ -2276,8 +2269,8 @@ class CBIntType(CIntType):
         utility_code_name = "__Pyx_PyUnicode_FromBInt_" + self.specialization_name()
         to_pyunicode_utility = TempitaUtilityCode.load_cached(
             "CBIntToPyUnicode", "TypeConversion.c", context={
-                "TRUE_CONST":  code.globalstate.get_py_string_const(StringEncoding.EncodedString("True")).cname,
-                "FALSE_CONST": code.globalstate.get_py_string_const(StringEncoding.EncodedString("False")).cname,
+                "TRUE_CONST":  code.get_py_string_const(StringEncoding.EncodedString("True")),
+                "FALSE_CONST": code.get_py_string_const(StringEncoding.EncodedString("False")),
                 "TO_PY_FUNCTION": utility_code_name,
             })
         code.globalstate.use_utility_code(to_pyunicode_utility)
@@ -3741,6 +3734,7 @@ class ToPyStructUtilityCode:
         code = output['utility_code_def']
         proto = output['utility_code_proto']
 
+        code.enter_cfunc_scope(self.env.global_scope())
         code.putln("%s {" % self.header)
         code.putln("PyObject* res;")
         code.putln("PyObject* member;")
@@ -3758,6 +3752,7 @@ class ToPyStructUtilityCode:
         code.putln("Py_DECREF(res);")
         code.putln("return NULL;")
         code.putln("}")
+        code.exit_cfunc_scope()
 
         # This is a bit of a hack, we need a forward declaration
         # due to the way things are ordered in the module...
@@ -4716,6 +4711,13 @@ class PythonTypeConstructorMixin:
     """Used to help Cython interpret indexed types from the typing module (or similar)
     """
     modifier_name = None
+    contains_none = False
+
+    def allows_none(self):
+        return (
+            self.modifier_name == 'typing.Optional' or
+            self.modifier_name == 'typing.Union' and self.contains_none
+        )
 
     def set_python_type_constructor_name(self, name):
         self.python_type_constructor_name = name
@@ -4774,6 +4776,8 @@ class SpecialPythonTypeConstructor(PyObjectType, PythonTypeConstructorMixin):
 
     def specialize_here(self, pos, env, template_values=None):
         if len(template_values) != 1:
+            if self.modifier_name == "typing.Union":
+                return None
             error(pos, "'%s' takes exactly one template argument." % self.name)
             return error_type
         if template_values[0] is None:
@@ -4850,13 +4854,13 @@ c_null_ptr_type =     CNullPtrType(c_void_type)
 c_void_ptr_type =     CPtrType(c_void_type)
 c_void_ptr_ptr_type = CPtrType(c_void_ptr_type)
 c_char_ptr_type =     CPtrType(c_char_type)
-c_const_char_ptr_type = CPtrType(CConstType(c_char_type))
+c_const_char_ptr_type = CPtrType(c_const_type(c_char_type))
 c_uchar_ptr_type =    CPtrType(c_uchar_type)
-c_const_uchar_ptr_type = CPtrType(CConstType(c_uchar_type))
+c_const_uchar_ptr_type = CPtrType(c_const_type(c_uchar_type))
 c_char_ptr_ptr_type = CPtrType(c_char_ptr_type)
 c_int_ptr_type =      CPtrType(c_int_type)
 c_py_unicode_ptr_type = CPtrType(c_py_unicode_type)
-c_const_py_unicode_ptr_type = CPtrType(CConstType(c_py_unicode_type))
+c_const_py_unicode_ptr_type = CPtrType(c_const_type(c_py_unicode_type))
 c_py_ssize_t_ptr_type =  CPtrType(c_py_ssize_t_type)
 c_ssize_t_ptr_type =  CPtrType(c_ssize_t_type)
 c_size_t_ptr_type =  CPtrType(c_size_t_type)
@@ -5054,6 +5058,7 @@ def best_match(arg_types, functions, pos=None, env=None, args=None):
                     cname = func.cname + "<%s>" % ",".join([t.empty_declaration_code() for t in type_list]),
                     type = func_type.specialize(deductions),
                     pos = func.pos)
+                specialization.scope = func.scope
                 candidates.append((specialization, specialization.type))
         else:
             candidates.append((func, func_type))
@@ -5365,7 +5370,7 @@ def simple_c_type(signed, longness, name):
     # Returns None if arguments don't make sense.
     return modifiers_and_name_to_type.get((signed, longness, name))
 
-def parse_basic_type(name):
+def parse_basic_type(name: str):
     base = None
     if name.startswith('p_'):
         base = parse_basic_type(name[2:])
@@ -5375,6 +5380,12 @@ def parse_basic_type(name):
         base = parse_basic_type(name[:-1])
     if base:
         return CPtrType(base)
+    if name.startswith(('const_', 'volatile_')):
+        modifier, _, base_name = name.partition('_')
+        base = parse_basic_type(base_name)
+        if base:
+            return CConstOrVolatileType(
+                base, is_const=modifier == 'const', is_volatile=modifier == 'volatile')
     #
     if name in fixed_sign_int_types:
         return fixed_sign_int_types[name][1]
@@ -5430,11 +5441,7 @@ def cpp_rvalue_ref_type(base_type):
     # Construct a C++ rvalue reference type
     return _construct_type_from_base(CppRvalueReferenceType, base_type)
 
-def c_const_type(base_type):
-    # Construct a C const type.
-    return _construct_type_from_base(CConstType, base_type)
-
-def c_const_or_volatile_type(base_type, is_const, is_volatile):
+def c_const_or_volatile_type(base_type, is_const=False, is_volatile=False):
     # Construct a C const/volatile type.
     return _construct_type_from_base(CConstOrVolatileType, base_type, is_const, is_volatile)
 

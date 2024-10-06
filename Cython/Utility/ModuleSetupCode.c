@@ -655,6 +655,7 @@ class __Pyx_FakeReference {
 
 
 /////////////// PythonCompatibility ///////////////
+//@substitute: naming
 
 #define __PYX_BUILD_PY_SSIZE_T "n"
 #define CYTHON_FORMAT_SSIZE_T "z"
@@ -874,7 +875,7 @@ static CYTHON_INLINE int __Pyx__IsSameCFunction(PyObject *func, void *cfunc) {
 #endif
 
 #if CYTHON_USE_MODULE_STATE
-static CYTHON_INLINE void *__Pyx_PyModule_GetState(PyObject *op)
+static CYTHON_INLINE void *__Pyx__PyModule_GetState(PyObject *op)
 {
     void *result;
 
@@ -883,6 +884,11 @@ static CYTHON_INLINE void *__Pyx_PyModule_GetState(PyObject *op)
         Py_FatalError("Couldn't find the module state");
     return result;
 }
+// Define a macro with a cast because the modulestate type isn't known yet and
+// is a typedef struct so impossible to forward declare
+#define __Pyx_PyModule_GetState(o) ($modulestatetype_cname *)__Pyx__PyModule_GetState(o)
+#else
+#define __Pyx_PyModule_GetState(op) ((void)op,$modulestateglobal_cname)
 #endif
 
 // The "Try" variants may return NULL on static types with the Limited API on earlier versions
@@ -1042,23 +1048,7 @@ static CYTHON_INLINE PyObject * __Pyx_PyDict_GetItemStrWithError(PyObject *dict,
 #endif
 
 // ("..." % x)  must call PyNumber_Remainder() if x is a string subclass that implements "__rmod__()".
-#define __Pyx_PyString_FormatSafe(a, b)   ((unlikely((a) == Py_None || (PyString_Check(b) && !PyString_CheckExact(b)))) ? PyNumber_Remainder(a, b) : __Pyx_PyString_Format(a, b))
 #define __Pyx_PyUnicode_FormatSafe(a, b)  ((unlikely((a) == Py_None || (PyUnicode_Check(b) && !PyUnicode_CheckExact(b)))) ? PyNumber_Remainder(a, b) : PyUnicode_Format(a, b))
-#define __Pyx_PyString_Format(a, b)  PyUnicode_Format(a, b)
-
-// TODO: remove this block
-#define PyBaseString_Type            PyUnicode_Type
-#define PyStringObject               PyUnicodeObject
-#define PyString_Type                PyUnicode_Type
-#define PyString_Check               PyUnicode_Check
-#define PyString_CheckExact          PyUnicode_CheckExact
-// PyPy3 used to define "PyObject_Unicode"
-#ifndef PyObject_Unicode
-  #define PyObject_Unicode             PyObject_Str
-#endif
-
-#define __Pyx_PyBaseString_Check(obj) PyUnicode_Check(obj)
-#define __Pyx_PyBaseString_CheckExact(obj) PyUnicode_CheckExact(obj)
 
 #if CYTHON_COMPILING_IN_CPYTHON
   #define __Pyx_PySequence_ListKeepNew(obj) \
@@ -1246,7 +1236,7 @@ static CYTHON_INLINE int __Pyx_PyDict_GetItemRef(PyObject *dict, PyObject *key, 
 #include <structmember.h>
 
 
-/////////////// SmallCodeConfig.proto ///////////////
+/////////////// SmallCodeConfig ///////////////
 
 #ifndef CYTHON_SMALL_CODE
 #if defined(__clang__)
@@ -1259,7 +1249,7 @@ static CYTHON_INLINE int __Pyx_PyDict_GetItemRef(PyObject *dict, PyObject *key, 
 #endif
 
 
-/////////////// PyModInitFuncType.proto ///////////////
+/////////////// PyModInitFuncType ///////////////
 
 #ifndef CYTHON_NO_PYINIT_EXPORT
   #define __Pyx_PyMODINIT_FUNC PyMODINIT_FUNC
@@ -1658,12 +1648,11 @@ static void __pyx_insert_code_object(int code_line, __Pyx_CachedCodeObjectType* 
       PyMem_Free(entries);
   }
 
-/////////////// CheckBinaryVersion.proto ///////////////
+/////////////// GetRuntimeVersion.proto ///////////////
 
 static unsigned long __Pyx_get_runtime_version(void);
-static int __Pyx_check_binary_version(unsigned long ct_version, unsigned long rt_version, int allow_newer);
 
-/////////////// CheckBinaryVersion ///////////////
+/////////////// GetRuntimeVersion ///////////////
 
 static unsigned long __Pyx_get_runtime_version(void) {
     // We will probably never need the alpha/beta status, so avoid the complexity to parse it.
@@ -1694,6 +1683,12 @@ static unsigned long __Pyx_get_runtime_version(void) {
     return __Pyx_cached_runtime_version;
 #endif
 }
+
+/////////////// CheckBinaryVersion.proto ///////////////
+
+static int __Pyx_check_binary_version(unsigned long ct_version, unsigned long rt_version, int allow_newer);
+
+/////////////// CheckBinaryVersion ///////////////
 
 static int __Pyx_check_binary_version(unsigned long ct_version, unsigned long rt_version, int allow_newer) {
     // runtime version is: -1 => older, 0 => equal, 1 => newer
@@ -2180,7 +2175,6 @@ static PyObject* __Pyx_PyCode_New(
 );/*proto*/
 
 //////////////////// NewCodeObj ////////////////////////
-//@substitute: naming
 
 #if CYTHON_COMPILING_IN_LIMITED_API
     // Note that the limited API doesn't know about PyCodeObject, so the type of this
@@ -2274,8 +2268,7 @@ static PyObject* __Pyx_PyCode_New(
       #else
         PyCode_NewWithPosOnlyArgs
       #endif
-        (a, p, k, l, s, f, code, c, n, v, fv, cell, fn, name, name, fline, lnos, ${empty_bytes});
-    Py_DECREF(${empty_bytes});
+        (a, p, k, l, s, f, code, c, n, v, fv, cell, fn, name, name, fline, lnos, EMPTY(bytes));
     return result;
   }
 #elif PY_VERSION_HEX >= 0x030800B2 && !CYTHON_COMPILING_IN_PYPY
@@ -2337,7 +2330,7 @@ static PyObject* __Pyx_PyCode_New(
     Py_INCREF(varnames_tuple_dedup);
     #endif
 
-    if (__PYX_LIMITED_VERSION_HEX >= 0x030b0000 && line_table != NULL) {
+    if (__PYX_LIMITED_VERSION_HEX >= (0x030b0000) && line_table != NULL) {
         line_table_bytes = PyBytes_FromStringAndSize(line_table, descr.line_table_length);
         if (unlikely(!line_table_bytes)) goto done;
 
@@ -2361,16 +2354,16 @@ static PyObject* __Pyx_PyCode_New(
         (int) descr.nlocals,
         0,
         (int) descr.flags,
-        code_bytes ? code_bytes : ${empty_bytes},
-        ${empty_tuple},
-        ${empty_tuple},
+        code_bytes ? code_bytes : EMPTY(bytes),
+        EMPTY(tuple),
+        EMPTY(tuple),
         varnames_tuple_dedup,
-        ${empty_tuple},
-        ${empty_tuple},
+        EMPTY(tuple),
+        EMPTY(tuple),
         filename,
         funcname,
         (int) descr.first_line,
-        (__PYX_LIMITED_VERSION_HEX >= 0x030b0000) ? line_table_bytes : ${empty_bytes}
+        (__PYX_LIMITED_VERSION_HEX >= (0x030b0000)) ? line_table_bytes : EMPTY(bytes)
     );
 
 done:

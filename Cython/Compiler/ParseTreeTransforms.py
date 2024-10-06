@@ -2,13 +2,13 @@ import cython
 cython.declare(PyrexTypes=object, Naming=object, ExprNodes=object, Nodes=object,
                Options=object, UtilNodes=object, LetNode=object,
                LetRefNode=object, TreeFragment=object, EncodedString=object,
-               build_line_table=object,
                error=object, warning=object, copy=object, hashlib=object, sys=object,
-               _unicode=object)
+               itemgetter=object)
 
 import copy
 import hashlib
 import sys
+from operator import itemgetter
 
 from . import PyrexTypes
 from . import Naming
@@ -18,7 +18,6 @@ from . import Options
 from . import Builtin
 from . import Errors
 
-from .LineTable import build_line_table
 from .Visitor import VisitorTransform, TreeVisitor
 from .Visitor import CythonTransform, EnvTransform, ScopeTrackingTransform
 from .UtilNodes import LetNode, LetRefNode
@@ -609,6 +608,7 @@ def sort_common_subsequences(items):
                 items[i] = items[i-1]
             items[new_pos] = item
 
+
 def unpack_string_to_character_literals(literal):
     chars = []
     pos = literal.pos
@@ -617,7 +617,7 @@ def unpack_string_to_character_literals(literal):
     sval_type = sval.__class__
     for char in sval:
         cval = sval_type(char)
-        chars.append(stype(pos, value=cval, constant_result=cval))
+        chars.append(stype(pos, value=cval))
     return chars
 
 
@@ -1236,8 +1236,7 @@ class InterpretCompilerDirectives(CythonTransform):
                     'The %s directive takes one compile-time integer argument' % optname)
             return (optname, int(args[0].value))
         elif directivetype is str:
-            if kwds is not None or len(args) != 1 or not isinstance(
-                    args[0], (ExprNodes.StringNode, ExprNodes.UnicodeNode)):
+            if kwds is not None or len(args) != 1 or not isinstance(args[0], ExprNodes.UnicodeNode):
                 raise PostParseError(pos,
                     'The %s directive takes one compile-time string argument' % optname)
             return (optname, str(args[0].value))
@@ -1257,8 +1256,7 @@ class InterpretCompilerDirectives(CythonTransform):
                     'The %s directive takes no keyword arguments' % optname)
             return optname, [ str(arg.value) for arg in args ]
         elif callable(directivetype):
-            if kwds is not None or len(args) != 1 or not isinstance(
-                    args[0], (ExprNodes.StringNode, ExprNodes.UnicodeNode)):
+            if kwds is not None or len(args) != 1 or not isinstance(args[0], ExprNodes.UnicodeNode):
                 raise PostParseError(pos,
                     'The %s directive takes one compile-time string argument' % optname)
             return (optname, directivetype(optname, str(args[0].value)))
@@ -2582,8 +2580,8 @@ if VALUE is not None:
             "INIT_ASSIGNMENTS": Nodes.StatListNode(node.pos, stats = init_assignments),
             "IS_UNION": ExprNodes.BoolNode(node.pos, value = not node.entry.type.is_struct),
             "MEMBER_TUPLE": ExprNodes.TupleNode(node.pos, args=attributes),
-            "STR_FORMAT": ExprNodes.StringNode(node.pos, value = EncodedString(str_format)),
-            "REPR_FORMAT": ExprNodes.StringNode(node.pos, value = EncodedString(str_format.replace("%s", "%r"))),
+            "STR_FORMAT": ExprNodes.UnicodeNode(node.pos, value = EncodedString(str_format)),
+            "REPR_FORMAT": ExprNodes.UnicodeNode(node.pos, value = EncodedString(str_format.replace("%s", "%r"))),
         }, pos = node.pos).stats[0]
         wrapper_class.class_name = node.name
         wrapper_class.shadow = True
@@ -2788,12 +2786,9 @@ class CalculateQualifiedNamesTransform(EnvTransform):
         entry = node.scope.lookup_here(name)
         lhs = ExprNodes.NameNode(
             node.pos,
-            name = EncodedString(name),
+            name=EncodedString(name),
             entry=entry)
-        rhs = ExprNodes.StringNode(
-            node.pos,
-            value=value.as_utf8_string(),
-            unicode_value=value)
+        rhs = ExprNodes.UnicodeNode(node.pos, value=value)
         node.body.stats.insert(0, Nodes.SingleAssignmentNode(
             node.pos,
             lhs=lhs,
@@ -2902,23 +2897,29 @@ class AnalyseExpressionsTransform(CythonTransform):
         """
         Build the PEP-626 line table and "bytecode-to-position" mapping used for CodeObjects.
         """
-        positions: list = sorted(self.positions.pop(), reverse=True)
+        # Code can originate from different source files and string code fragments, even within a single function.
+        # Thus, it's not completely correct to just ignore the source files when sorting the line numbers,
+        # but it also doesn't hurt much for the moment. Eventually, we might need different CodeObjects
+        # even within a single function if it uses code from different sources / line number ranges.
+        positions: list = sorted(
+            self.positions.pop(),
+            key=itemgetter(1, 2),  # (line, column)
+            # Build ranges backwards to know the end column before we see the start column in the same line.
+            reverse=True,
+        )
+
+        next_line = -1
+        next_column_in_line = 0
 
         ranges = []
-        line: cython.int
-        next_line: cython.int = -1
-        start_column: cython.int
-        end_column: cython.int
-        next_column: cython.int = 0
-
         for _, line, start_column in positions:
-            end_column = next_column if line == next_line else start_column + 1
-            ranges.append((line, line, start_column, end_column))
-            next_line, next_column = line, start_column
+            ranges.append((line, line, start_column, next_column_in_line if line == next_line else start_column + 1))
+            next_line, next_column_in_line = line, start_column
 
         ranges.reverse()
         func_node.node_positions = ranges
 
+        positions.reverse()
         i: cython.Py_ssize_t
         func_node.local_scope.node_positions_to_offset = {
             position: i
@@ -2981,7 +2982,7 @@ class ExpandInplaceOperators(EnvTransform):
                 index = LetRefNode(node.index)
                 return ExprNodes.IndexNode(node.pos, base=base, index=index), temps + [index]
             elif node.is_attribute:
-                obj, temps = side_effect_free_reference(node.obj)
+                obj, temps = side_effect_free_reference(node.obj, setting=setting)
                 return ExprNodes.AttributeNode(node.pos, obj=obj, attribute=node.attribute), temps
             elif isinstance(node, ExprNodes.BufferIndexNode):
                 raise ValueError("Don't allow things like attributes of buffer indexing operations")
@@ -3805,6 +3806,11 @@ class CoerceCppTemps(EnvTransform, SkipDeclarations):
 
         return node
 
+    def visit_ExprStatNode(self, node):
+        # Deliberately skip `expr` in ExprStatNode - we don't need to access it.
+        self.visitchildren(node.expr)
+        return node
+
 
 class TransformBuiltinMethods(EnvTransform):
     """
@@ -3840,7 +3846,7 @@ class TransformBuiltinMethods(EnvTransform):
         if attribute:
             if attribute == '__version__':
                 from .. import __version__ as version
-                node = ExprNodes.StringNode(node.pos, value=EncodedString(version))
+                node = ExprNodes.UnicodeNode(node.pos, value=EncodedString(version))
             elif attribute == 'NULL':
                 node = ExprNodes.NullNode(node.pos)
             elif attribute in ('set', 'frozenset', 'staticmethod'):

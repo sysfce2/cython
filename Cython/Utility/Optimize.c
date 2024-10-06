@@ -217,7 +217,7 @@ static PyObject* __Pyx_PyDict_GetItemDefault(PyObject* d, PyObject* key, PyObjec
     // avoid C compiler warning about unused utility functions
     if ((1));
 #else
-    if (PyString_CheckExact(key) || PyUnicode_CheckExact(key) || PyLong_CheckExact(key)) {
+    if (PyBytes_CheckExact(key) || PyUnicode_CheckExact(key) || PyLong_CheckExact(key)) {
         /* these presumably have safe hash functions */
         value = PyDict_GetItem(d, key);
         if (unlikely(!value)) {
@@ -265,7 +265,7 @@ static CYTHON_INLINE PyObject *__Pyx_PyDict_Pop(PyObject *d, PyObject *key, PyOb
 /////////////// py_dict_pop ///////////////
 
 static CYTHON_INLINE PyObject *__Pyx_PyDict_Pop(PyObject *d, PyObject *key, PyObject *default_value) {
-#if PY_VERSION_HEX >= 0x030d00A2
+#if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030d00A2 || defined(PyDict_Pop)
     PyObject *value;
     if (PyDict_Pop(d, key, &value) == 0) {
         if (default_value) {
@@ -297,7 +297,7 @@ static CYTHON_INLINE int __Pyx_PyDict_Pop_ignore(PyObject *d, PyObject *key, PyO
 
 static CYTHON_INLINE int __Pyx_PyDict_Pop_ignore(PyObject *d, PyObject *key, PyObject *default_value) {
     // We take the "default_value" as argument to avoid "unused" warnings, but we ignore it here.
-#if PY_VERSION_HEX >= 0x030d00A2
+#if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030d00A2 || defined(PyDict_Pop)
     int result = PyDict_Pop(d, key, NULL);
     CYTHON_UNUSED_VAR(default_value);
     return (unlikely(result == -1)) ? -1 : 0;
@@ -702,15 +702,6 @@ static double __Pyx__PyObject_AsDouble(PyObject* obj) {
     }
 bad:
     return (double)-1;
-}
-
-
-/////////////// pystring_as_double.proto ///////////////
-//@requires: pyunicode_as_double
-
-// TODO: remove
-static CYTHON_INLINE double __Pyx_PyString_AsDouble(PyObject *obj) {
-    return __Pyx_PyUnicode_AsDouble(obj);
 }
 
 

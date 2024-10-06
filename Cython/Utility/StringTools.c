@@ -57,7 +57,7 @@ static int __Pyx_InitStrings(__Pyx_StringTabEntry const *t, PyObject **target, c
 static int __Pyx_InitStrings(__Pyx_StringTabEntry const *t, PyObject **target, const char* const* encoding_names) {
     while (t->s) {
         PyObject *str;
-        if (t->is_unicode | t->is_str) {
+        if (t->is_unicode) {
             if (t->intern) {
                 str = PyUnicode_InternFromString(t->s);
             } else if (t->encoding) {
@@ -134,13 +134,6 @@ static CYTHON_INLINE int __Pyx_StrEq(const char *s1, const char *s2) {
     while (*s1 != '\0' && *s1 == *s2) { s1++; s2++; }
     return *s1 == *s2;
 }
-
-
-//////////////////// StrEquals.proto ////////////////////
-//@requires: UnicodeEquals
-
-// TODO: remove
-#define __Pyx_PyString_Equals __Pyx_PyUnicode_Equals
 
 
 //////////////////// UnicodeEquals.proto ////////////////////
@@ -443,7 +436,6 @@ static CYTHON_INLINE PyObject* __Pyx_decode_c_string(
 /////////////// decode_c_string ///////////////
 //@requires: IncludeStringH
 //@requires: decode_c_string_utf16
-//@substitute: naming
 
 /* duplicate code to avoid calling strlen() if start >= 0 and stop >= 0 */
 static CYTHON_INLINE PyObject* __Pyx_decode_c_string(
@@ -468,7 +460,7 @@ static CYTHON_INLINE PyObject* __Pyx_decode_c_string(
             stop += length;
     }
     if (unlikely(stop <= start))
-        return __Pyx_NewRef($empty_unicode);
+        return __Pyx_NewRef(EMPTY(unicode));
     length = stop - start;
     cstring += start;
     if (decode_func) {
@@ -487,7 +479,6 @@ static CYTHON_INLINE PyObject* __Pyx_decode_c_bytes(
 
 /////////////// decode_c_bytes ///////////////
 //@requires: decode_c_string_utf16
-//@substitute: naming
 
 static CYTHON_INLINE PyObject* __Pyx_decode_c_bytes(
          const char* cstring, Py_ssize_t length, Py_ssize_t start, Py_ssize_t stop,
@@ -505,7 +496,7 @@ static CYTHON_INLINE PyObject* __Pyx_decode_c_bytes(
     if (stop > length)
         stop = length;
     if (unlikely(stop <= start))
-        return __Pyx_NewRef($empty_unicode);
+        return __Pyx_NewRef(EMPTY(unicode));
     length = stop - start;
     cstring += start;
     if (decode_func) {
@@ -564,7 +555,6 @@ static CYTHON_INLINE PyObject* __Pyx_PyUnicode_Substring(
             PyObject* text, Py_ssize_t start, Py_ssize_t stop);
 
 /////////////// PyUnicode_Substring ///////////////
-//@substitute: naming
 
 static CYTHON_INLINE PyObject* __Pyx_PyUnicode_Substring(
             PyObject* text, Py_ssize_t start, Py_ssize_t stop) {
@@ -586,7 +576,7 @@ static CYTHON_INLINE PyObject* __Pyx_PyUnicode_Substring(
     else if (stop > length)
         stop = length;
     if (stop <= start)
-        return __Pyx_NewRef($empty_unicode);
+        return __Pyx_NewRef(EMPTY(unicode));
     if (start == 0 && stop == length)
         return __Pyx_NewRef(text);
 #if CYTHON_COMPILING_IN_LIMITED_API
@@ -823,26 +813,6 @@ static int __Pyx_PyBytes_Tailmatch(PyObject* self, PyObject* substr,
 }
 
 
-/////////////// str_tailmatch.proto ///////////////
-
-static CYTHON_INLINE int __Pyx_PyStr_Tailmatch(PyObject* self, PyObject* arg, Py_ssize_t start,
-                                               Py_ssize_t end, int direction); /*proto*/
-
-/////////////// str_tailmatch ///////////////
-//@requires: unicode_tailmatch
-
-// TODO: remove
-static CYTHON_INLINE int __Pyx_PyStr_Tailmatch(PyObject* self, PyObject* arg, Py_ssize_t start,
-                                               Py_ssize_t end, int direction)
-{
-    // We do not use a C compiler macro here to avoid "unused function"
-    // warnings for the *_Tailmatch() function that is not being used in
-    // the specific CPython version.  The C compiler will generate the same
-    // code anyway, and will usually just remove the unused function.
-    return __Pyx_PyUnicode_Tailmatch(self, arg, start, end, direction);
-}
-
-
 /////////////// bytes_index.proto ///////////////
 
 static CYTHON_INLINE char __Pyx_PyBytes_GetItemInt(PyObject* bytes, Py_ssize_t index, int check_bounds); /*proto*/
@@ -878,8 +848,6 @@ static CYTHON_INLINE char __Pyx_PyBytes_GetItemInt(PyObject* bytes, Py_ssize_t i
 
 //////////////////// StringJoin.proto ////////////////////
 
-#define __Pyx_PyString_Join PyUnicode_Join
-#define __Pyx_PyBaseString_Join PyUnicode_Join
 static CYTHON_INLINE PyObject* __Pyx_PyBytes_Join(PyObject* sep, PyObject* values); /*proto*/
 
 //////////////////// StringJoin ////////////////////
@@ -903,7 +871,6 @@ static PyObject* __Pyx_PyUnicode_Join(PyObject** values, Py_ssize_t value_count,
 
 /////////////// JoinPyUnicode ///////////////
 //@requires: IncludeStringH
-//@substitute: naming
 
 static PyObject* __Pyx_PyUnicode_Join(PyObject** values, Py_ssize_t value_count, Py_ssize_t result_ulength,
                                       Py_UCS4 max_char) {
@@ -981,7 +948,7 @@ bad:
         Py_INCREF(values[i]);
     }
 
-    result = PyUnicode_Join($empty_unicode, value_tuple);
+    result = PyUnicode_Join(EMPTY(unicode), value_tuple);
 
 bad:
     Py_DECREF(value_tuple);
@@ -1237,23 +1204,3 @@ static CYTHON_INLINE PyObject* __Pyx_PyUnicode_Unicode(PyObject *obj) {
 
 #define __Pyx_PyObject_Unicode(obj) \
     (likely(PyUnicode_CheckExact(obj)) ? __Pyx_NewRef(obj) : PyObject_Str(obj))
-
-
-//////////////////// PyStr_Str.proto ////////////////////
-
-static CYTHON_INLINE PyObject* __Pyx_PyStr_Str(PyObject *obj);/*proto*/
-
-//////////////////// PyStr_Str ////////////////////
-
-static CYTHON_INLINE PyObject* __Pyx_PyStr_Str(PyObject *obj) {
-    if (unlikely(obj == Py_None))
-        obj = PYIDENT("None");
-    return __Pyx_NewRef(obj);
-}
-
-
-//////////////////// PyObject_Str.proto ////////////////////
-
-#define __Pyx_PyObject_Str(obj) \
-    (likely(PyString_CheckExact(obj)) ? __Pyx_NewRef(obj) : PyObject_Str(obj))
-
