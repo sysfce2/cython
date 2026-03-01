@@ -32,7 +32,7 @@ jobs:
           #- "windows-latest"  # needs more setup work
 
     runs-on: ${{ matrix.os }}
-    if: ${{ github.repository == 'cython/cython' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.repository == 'cython/cython' }}
     timeout-minutes: 600
 
     env:
